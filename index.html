@@ -5,16 +5,20 @@
 <title>Paw Pals Platformer</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { background:#1a1a2e; display:flex; justify-content:center; align-items:center; height:100vh; overflow:hidden;
-  font-family:'Segoe UI', sans-serif; }
-canvas { display:block; border-radius:12px; image-rendering:pixelated; }
-#touch-controls { position:fixed; bottom:20px; left:0; right:0; display:none; justify-content:space-between; padding:0
-  20px; z-index:10; }
-.touch-btn { width:70px; height:70px; border-radius:50%; background:rgba(255,255,255,0.15); border:2px solid
-  rgba(255,255,255,0.3); color:#fff; font-size:28px; display:flex; align-items:center; justify-content:center; user-
-  select:none; -webkit-user-select:none; touch-action:manipulation; }
-.touch-group { display:flex; gap:12px; }
+body { background:#1a1a2e; display:flex; flex-direction:column; justify-content:center; align-items:center;
+  min-height:100vh; overflow:hidden; font-family:'Segoe UI', sans-serif; }
+canvas { display:block; border-radius:12px; image-rendering:pixelated; max-width:100vw; }
+#touch-controls { position:fixed; bottom:12px; left:0; right:0; display:none;
+  justify-content:space-between; align-items:center; padding:0 16px; z-index:10; }
+.touch-btn { width:68px; height:68px; border-radius:50%; background:rgba(255,255,255,0.18);
+  border:2px solid rgba(255,255,255,0.35); color:#fff; font-size:26px; display:flex;
+  align-items:center; justify-content:center; user-select:none; -webkit-user-select:none;
+  touch-action:manipulation; cursor:pointer; }
+.touch-btn:active { background:rgba(255,255,255,0.35); }
+.touch-group { display:flex; gap:10px; align-items:center; }
+#btn-dash { width:60px; height:60px; font-size:20px; }
 @media (pointer:coarse) { #touch-controls { display:flex; } }
+@media (max-width: 600px) { #touch-controls { display:flex; } }
 </style>
 </head>
 <body>
@@ -24,6 +28,7 @@ canvas { display:block; border-radius:12px; image-rendering:pixelated; }
     <div class="touch-btn" id="btn-left">&#9664;</div>
     <div class="touch-btn" id="btn-right">&#9654;</div>
   </div>
+  <div class="touch-btn" id="btn-dash" title="Dash">&#x26A1;</div>
   <div class="touch-btn" id="btn-jump">&#9650;</div>
 </div>
 <script>
@@ -35,7 +40,8 @@ C.width = W; C.height = H;
 
 // Scale canvas to fit screen
 function resize() {
-  let s = Math.min(window.innerWidth/W, window.innerHeight/H, 1);
+  let controlsH = window.matchMedia('(pointer:coarse)').matches || window.innerWidth <= 600 ? 100 : 0;
+  let s = Math.min(window.innerWidth / W, (window.innerHeight - controlsH) / H);
   C.style.width = (W*s)+'px'; C.style.height = (H*s)+'px';
 }
 resize(); window.addEventListener('resize', resize);
@@ -224,7 +230,7 @@ document.addEventListener('keyup', e => { keys[e.key] = false; });
 
 
 // Touch
-let touchLeft=false, touchRight=false, touchJump=false;
+let touchLeft=false, touchRight=false, touchJump=false, touchDash=false;
 function addTouch(id, setter) {
   const el = document.getElementById(id);
   el.addEventListener('touchstart', e => { e.preventDefault(); setter(true); });
@@ -235,6 +241,7 @@ function addTouch(id, setter) {
 addTouch('btn-left', v => touchLeft=v);
 addTouch('btn-right', v => touchRight=v);
 addTouch('btn-jump', v => touchJump=v);
+addTouch('btn-dash', v => touchDash=v);
 
 
 // Click handler
@@ -2633,7 +2640,7 @@ function updatePlaying(dt) {
 	let wasDashing = player.dashTimer > 0;
 	if (player.dashTimer > 0) player.dashTimer--;
 	if (player.dashCooldown > 0) player.dashCooldown--;
-	if (keys['ArrowDown'] && player.dashCooldown === 0) {
+	if ((keys['ArrowDown'] || touchDash) && player.dashCooldown === 0) {
 		player.vx = player.facing * 21;
 		player.dashTimer = 50;
 		player.dashCooldown = 45;
@@ -4130,47 +4137,43 @@ function drawShop() {
         if (equipped) {
             X.fillStyle = '#d4a017';
             X.font = 'bold 11px Segoe UI, sans-serif';
-            X.fillText(tr('equipped'), cx + cardW/2, cy + 80);
+            X.fillText(tr('equipped'), cx + cardW/2, cy + 78);
         } else if (owned) {
             X.fillStyle = '#5ab569';
             X.font = '11px Segoe UI, sans-serif';
-            X.fillText(tr('tapEquip'), cx + cardW/2, cy + 80);
+            X.fillText(tr('tapEquip'), cx + cardW/2, cy + 78);
         } else {
-            // Cost display
+            // Cost display - star + number, clearly above the buy button
             X.fillStyle = canAfford ? '#ffd700' : '#ccc';
-            drawStar(cx + cardW/2 - 12, cy + 78, 5);
+            drawStar(cx + cardW/2 - 14, cy + 76, 5);
             X.fillStyle = canAfford ? '#5a3a2a' : '#999';
             X.font = 'bold 12px Segoe UI, sans-serif';
-            X.fillText(acc.cost, cx + cardW/2 + 4, cy + 82);
+            X.fillText(acc.cost, cx + cardW/2 + 2, cy + 79);
         }
-
-
 
 
         // Buy / action button area
         if (owned) {
             let btnLabel = equipped ? 'Unequip' : 'Equip';
             let btnColor = equipped ? '#ff9ff3' : '#54a0ff';
-            let abx = cx + 14, aby = cy + cardH - 25, abw = cardW - 28, abh = 20;
+            let abx = cx + 10, aby = cy + cardH - 22, abw = cardW - 20, abh = 18;
             X.fillStyle = btnColor;
             drawRoundRect(abx, aby, abw, abh, 6);
             X.fillStyle = '#fff';
             X.font = 'bold 10px Segoe UI, sans-serif';
-            X.fillText(btnLabel, abx + abw/2, aby + 14);
-
+            X.fillText(btnLabel, abx + abw/2, aby + 13);
 
             if (consumeClick(cx, cy, cardW, cardH)) {
                 if (equipped) { equippedAccessory = -1; }
                 else { equippedAccessory = i; }
             }
         } else if (canAfford) {
-            let abx = cx + 14, aby = cy + cardH - 25, abw = cardW - 28, abh = 20;
+            let abx = cx + 10, aby = cy + cardH - 22, abw = cardW - 20, abh = 18;
             X.fillStyle = '#6abf69';
             drawRoundRect(abx, aby, abw, abh, 6);
             X.fillStyle = '#fff';
             X.font = 'bold 10px Segoe UI, sans-serif';
-            X.fillText(tr('buy'), abx + abw/2, aby + 14);
-
+            X.fillText(tr('buy'), abx + abw/2, aby + 13);
 
             if (consumeClick(cx, cy, cardW, cardH)) {
                 spentStars += acc.cost;
@@ -4291,15 +4294,22 @@ function drawShop() {
             X.fillText(tr('maxed'), ucx + upgradeCardW/2, ucy + upgradeCardH - 14);
             X.textAlign = 'left';
         } else {
-            let btnX = ucx + 50, btnY = ucy + upgradeCardH - 30, btnW = upgradeCardW - 60, btnH = 22;
+            // Cost label above the button
+            X.fillStyle = canAfford ? '#ffd700' : '#bbb';
+            drawStar(ucx + 56, ucy + upgradeCardH - 40, 5);
+            X.fillStyle = canAfford ? '#5a3a2a' : '#aaa';
+            X.font = 'bold 12px Segoe UI, sans-serif';
+            X.textAlign = 'left';
+            X.fillText(nextCost, ucx + 67, ucy + upgradeCardH - 36);
+            // Buy button
+            let btnX = ucx + 50, btnY = ucy + upgradeCardH - 24, btnW = upgradeCardW - 60, btnH = 20;
             X.fillStyle = canAfford ? '#6abf69' : '#ccc';
             drawRoundRect(btnX, btnY, btnW, btnH, 6);
             X.fillStyle = '#fff';
-            X.font = 'bold 13px Segoe UI, sans-serif';
+            X.font = 'bold 12px Segoe UI, sans-serif';
             X.textAlign = 'center';
-            X.fillText('\u2605 ' + nextCost, btnX + btnW/2, btnY + 15);
+            X.fillText(tr('buy'), btnX + btnW/2, btnY + 14);
             X.textAlign = 'left';
-
 
             if (canAfford && consumeClick(ucx, ucy, upgradeCardW, upgradeCardH)) {
                 spentStars += nextCost;
