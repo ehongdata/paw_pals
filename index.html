@@ -8,33 +8,92 @@
 body { background:#1a1a2e; display:flex; flex-direction:column; justify-content:center; align-items:center;
   min-height:100vh; overflow:hidden; font-family:'Segoe UI', sans-serif; }
 canvas { display:block; border-radius:12px; image-rendering:pixelated; max-width:100vw; }
+
+/* Portrait: controls below canvas */
 #touch-controls { position:fixed; bottom:12px; left:0; right:0; display:none;
   justify-content:space-between; align-items:center; padding:0 16px; z-index:10; }
 .touch-btn { width:68px; height:68px; border-radius:50%; background:rgba(255,255,255,0.18);
   border:2px solid rgba(255,255,255,0.35); color:#fff; font-size:26px; display:flex;
   align-items:center; justify-content:center; user-select:none; -webkit-user-select:none;
   touch-action:manipulation; cursor:pointer; }
-.touch-btn:active { background:rgba(255,255,255,0.35); }
+.touch-btn:active { background:rgba(255,255,255,0.38); }
 .touch-group { display:flex; gap:10px; align-items:center; }
-#btn-dash { width:60px; height:60px; font-size:20px; }
+#touch-controls .right-group { display:flex; flex-direction:column; align-items:center; gap:8px; }
+#btn-dash { width:58px; height:58px; font-size:20px; }
+
 @media (pointer:coarse) { #touch-controls { display:flex; } }
 @media (max-width: 600px) { #touch-controls { display:flex; } }
+
+/* Landscape on mobile: move controls to sides so they don't cover the game */
+@media (pointer:coarse) and (orientation:landscape),
+       (max-width:900px) and (orientation:landscape) {
+  #touch-controls {
+    bottom: auto;
+    top: 0; left: 0; right: 0;
+    height: 100vh;
+    padding: 0;
+    align-items: flex-end;
+    pointer-events: none;
+  }
+  /* Left group: directional buttons, bottom-left corner */
+  .touch-group-left {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    pointer-events: all;
+  }
+  /* Right group: dash + jump, bottom-right corner */
+  .touch-group-right {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: row;
+    gap: 10px;
+    pointer-events: all;
+  }
+  /* Hide the default flex row layout items in landscape */
+  #touch-controls > .touch-group,
+  #touch-controls > .touch-btn { display: none; }
+  .touch-btn { width:60px; height:60px; font-size:22px; }
+}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="touch-controls">
+  <!-- Portrait layout -->
   <div class="touch-group">
     <div class="touch-btn" id="btn-left">&#9664;</div>
     <div class="touch-btn" id="btn-right">&#9654;</div>
   </div>
-  <div class="touch-btn" id="btn-dash" title="Dash">&#x26A1;</div>
-  <div class="touch-btn" id="btn-jump">&#9650;</div>
+  <div class="right-group">
+    <div class="touch-btn" id="btn-dash" title="Dash">&#x26A1;</div>
+    <div class="touch-btn" id="btn-jump">&#9650;</div>
+  </div>
+</div>
+<!-- Landscape layout: fixed corners -->
+<div class="touch-group-left" id="landscape-left" style="display:none">
+  <div class="touch-btn" id="btn-left2">&#9664;</div>
+  <div class="touch-btn" id="btn-right2">&#9654;</div>
+</div>
+<div class="touch-group-right" id="landscape-right" style="display:none">
+  <div class="touch-btn" id="btn-dash2" title="Dash">&#x26A1;</div>
+  <div class="touch-btn" id="btn-jump2">&#9650;</div>
 </div>
 <script>
 const C = document.getElementById('c');
 const X = C.getContext('2d');
 const W = 880, H = 500;
+// On mobile landscape, raise ground so touch buttons don't cover the player
+function getGroundOffset() {
+  const isTouch = window.matchMedia('(pointer:coarse)').matches || window.innerWidth <= 900;
+  const isLandscape = window.innerWidth > window.innerHeight;
+  return (isTouch && isLandscape) ? 90 : 0;
+}
 C.width = W; C.height = H;
 
 
@@ -353,10 +412,11 @@ function generateLevel(lvl) {
 
 
   // Ground
-  platforms.push({ x:0, y:H-40, w:200, h:40, type:'solid' });
+  const GO = getGroundOffset();
+  platforms.push({ x:0, y:H-40-GO, w:200, h:40, type:'solid' });
 
 
-  let px = 180, py = H - 40;
+  let px = 180, py = H - 40 - GO;
 
 
   for (let i = 0; i < totalTreats + 8; i++) {
@@ -371,7 +431,7 @@ function generateLevel(lvl) {
       dy = (Math.random()-0.4) * 60;
       px += gap + 60 + Math.random()*40;
     }
-    py = Math.max(100, Math.min(H-80, py + dy));
+    py = Math.max(100, Math.min(H-80-GO, py + dy));
 
 
     let pw = 80 + Math.random()*60 - lvl*5;
@@ -431,7 +491,7 @@ function generateLevel(lvl) {
 
   // End platform - reachable from last platform
   let lastP = platforms[platforms.length - 1];
-  let endY = Math.max(100, Math.min(H - 80, lastP.y - 20 - Math.random() * 40));
+  let endY = Math.max(100, Math.min(H - 80 - GO, lastP.y - 20 - Math.random() * 40));
   // Clamp so it's not more than 80px above last platform
   if (lastP.y - endY > 80) endY = lastP.y - 80;
   let endX = lastP.x + lastP.w + 80 + Math.random() * 40;
@@ -447,7 +507,7 @@ function generateLevel(lvl) {
 
 
   player = {
-    x: 60, y: H - 80, w: 28, h: 32,
+    x: 60, y: H - 80 - GO, w: 28, h: 32,
     vx: 0, vy: 0,
     onGround: false,
     facing: 1,
@@ -4734,7 +4794,7 @@ function drawRespawning() {
 
 
     if (respawnTimer > 80) {
-        player.x = 60; player.y = H - 80; player.vx = 0; player.vy = 0;
+        player.x = 60; player.y = H - 80 - getGroundOffset(); player.vx = 0; player.vy = 0;
         camera.x = 0;
         // Reset enemies
         for (let en of enemies) {
