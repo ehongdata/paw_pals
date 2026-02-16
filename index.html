@@ -1,3 +1,4 @@
+
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -465,7 +466,9 @@ function generateLevel(lvl) {
     py = Math.max(100, Math.min(H-80-GO, py + dy));
 
 
-    let pw = 80 + Math.random()*60 - lvl*5;
+    // Make platforms wider for early levels (0-5) to make game easier
+    let baseWidth = lvl <= 5 ? 100 : 80;
+    let pw = baseWidth + Math.random()*60 - lvl*5;
     pw = Math.max(50, pw);
 
 
