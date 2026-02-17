@@ -1,4 +1,3 @@
-
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -131,7 +130,7 @@ window.addEventListener('orientationchange', () => { setTimeout(resize, 100); })
 
 
 // --- GAME STATE ---
-let state = 'TITLE'; // TITLE, CHAR_SELECT, LEVEL_SELECT, COUNTDOWN, PLAYING, LEVEL_COMPLETE, GAME_COMPLETE, RESPAWNING
+let state = 'TITLE'; // TITLE, CHAR_SELECT, LEVEL_SELECT, COUNTDOWN, PLAYING, LEVEL_COMPLETE, GAME_COMPLETE, RESPAWNING, GAME_OVER
 let countdownTimer = 0;
 let character = null; // {type, color, earColor, treat, treatName}
 let currentLevel = 0;
@@ -143,7 +142,120 @@ let equippedAccessory = -1;
 let spentStars = 0;
 let energyDrinks = [];
 let upgrades = { jump: 0, speed: 0, luck: 0 };
+let lives = 15; // Player starts with 15 lives
+let gameOverTimer = 0;
 
+// Leaderboard
+let leaderboard = [];
+let playerName = '';
+let lastSubmittedName = ''; // Store the name after submitting to track updates
+let showLeaderboard = false;
+let showNameInput = false;
+let leaderboardScroll = 0; // Scroll offset for leaderboard
+let leaderboardTouchStart = 0;
+let leaderboardTouchLast = 0;
+let selectedPlayerIndex = -1; // Currently selected player for detail view
+let leaderboardFromGameOver = false; // Track if opened from game over screen
+
+// Load/Save Leaderboard
+function loadLeaderboard() {
+  try {
+    const saved = localStorage.getItem('pawPalsLeaderboard');
+    if (saved) leaderboard = JSON.parse(saved);
+  } catch(e) {}
+}
+
+function saveLeaderboard() {
+  try {
+    localStorage.setItem('pawPalsLeaderboard', JSON.stringify(leaderboard));
+  } catch(e) {}
+}
+
+function addToLeaderboard(name, score, starsEarned) {
+  // Check if player already exists
+  let existingIndex = leaderboard.findIndex(entry => entry.name.toLowerCase() === name.toLowerCase());
+  
+  if (existingIndex !== -1) {
+    // Player exists - update if new score is higher
+    if (score > leaderboard[existingIndex].score) {
+      leaderboard[existingIndex].score = score;
+      leaderboard[existingIndex].stars = starsEarned;
+      leaderboard[existingIndex].date = Date.now();
+    }
+  } else {
+    // New player - add to leaderboard
+    leaderboard.push({ name, score, stars: starsEarned, date: Date.now() });
+  }
+  
+  leaderboard.sort((a, b) => b.score - a.score);
+  leaderboard = leaderboard.slice(0, 15); // Keep top 15
+  saveLeaderboard();
+}
+
+function deleteFromLeaderboard(index) {
+  if (index >= 0 && index < leaderboard.length) {
+    leaderboard.splice(index, 1);
+    saveLeaderboard();
+  }
+}
+
+function updateLeaderboardIfExists() {
+  // Check if any entry matches the last submitted player name and update it
+  if (!lastSubmittedName) return; // No name submitted yet
+  
+  for (let i = 0; i < leaderboard.length; i++) {
+    if (leaderboard[i].name.toLowerCase() === lastSubmittedName.toLowerCase()) {
+      let newScore = calculateScore();
+      let totalStars = stars.reduce((a,b) => a+b, 0);
+      if (newScore > leaderboard[i].score) {
+        leaderboard[i].score = newScore;
+        leaderboard[i].stars = totalStars;
+        leaderboard[i].date = Date.now();
+        leaderboard.sort((a, b) => b.score - a.score);
+        saveLeaderboard();
+      }
+      return;
+    }
+  }
+}
+
+function calculateScore() {
+  return livePoints;
+}
+
+function addPoints(amount) {
+  livePoints += amount;
+}
+
+// Floating score text
+let floatingTexts = [];
+function showFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -1.5 });
+}
+function updateFloatingTexts() {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    let ft = floatingTexts[i];
+    ft.y += ft.vy;
+    ft.life -= 0.025;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+function drawFloatingTexts() {
+  for (let ft of floatingTexts) {
+    X.globalAlpha = ft.life;
+    X.fillStyle = ft.color;
+    X.font = 'bold 18px Segoe UI, sans-serif';
+    X.textAlign = 'center';
+    X.strokeStyle = 'rgba(0,0,0,0.5)';
+    X.lineWidth = 3;
+    X.strokeText(ft.text, ft.x, ft.y);
+    X.fillText(ft.text, ft.x, ft.y);
+    X.textAlign = 'left';
+  }
+  X.globalAlpha = 1;
+}
+
+loadLeaderboard();
 
 // Settings
 let settings = { music: true, sfx: true };
@@ -188,6 +300,12 @@ const T = {
     crystal: 'Crystal Cave', rainbow: 'Rainbow Summit', frozen: 'Frozen Tundra',
     volcanic: 'Volcanic Peaks', haunted: 'Haunted Hollow', ocean: 'Deep Ocean',
     galaxy: 'Starlight Galaxy',
+    leaderboard: 'Leaderboard', viewLeaderboard: 'View Leaderboard',
+    rank: 'Rank', player: 'Player', score: 'Score', starsLabel: 'Stars',
+    enterName: 'Enter Your Name', submit: 'Submit', noScores: 'No scores yet. Be the first!',
+    yourScore: 'Your Score', writeYourName: 'Write your name!',
+    gameOver: 'Game Over!', outOfLives: 'You ran out of lives!', addToLeaderboard: 'Add yourself to the leaderboard!',
+    livesLeft: 'Lives', youBeatGame: 'You beat the game!', notRagebait: 'I hope you enjoyed my NOT ragebait game!',
   },
   ko: {
     title: '포동포동 발바닥 친구들!', tagline: '친구를 골라서 간식을 모아 즐겨요!',
@@ -226,6 +344,12 @@ const T = {
     crystal: '수정 동굴', rainbow: '무지개 정상', frozen: '얼음 툰드라',
     volcanic: '화산 봉우리', haunted: '유령 골짜기', ocean: '깊은 바다',
     galaxy: '별빛 은하',
+    leaderboard: '순위표', viewLeaderboard: '순위표 보기',
+    rank: '순위', player: '플레이어', score: '점수', starsLabel: '별',
+    enterName: '이름을 입력하세요', submit: '제출', noScores: '아직 점수가 없습니다. 첫 번째가 되세요!',
+    yourScore: '당신의 점수', writeYourName: '이름 쓰기!',
+    gameOver: '게임 오버!', outOfLives: '생명이 다 떨어졌습니다!', addToLeaderboard: '순위표에 추가하기!',
+    livesLeft: '생명', youBeatGame: '게임을 완료했습니다!', notRagebait: '내 빡치지 않는 게임을 즐기셨기를 바랍니다!',
   }
 };
 function tr(key) { return (T[lang] && T[lang][key]) || T.en[key] || key; }
@@ -280,11 +404,54 @@ const CHARACTERS = [
 // --- INPUT ---
 const keys = {};
 document.addEventListener('keydown', e => {
+  // Name input handling
+  if (showNameInput) {
+    if (e.key === 'Escape') {
+      showNameInput = false;
+      playerName = '';
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Enter' && playerName.length > 0) {
+      let finalScore = calculateScore();
+      let totalStars = stars.reduce((a,b) => a+b, 0);
+      addToLeaderboard(playerName, finalScore, totalStars);
+      lastSubmittedName = playerName; // Remember this name for auto-updates
+      showNameInput = false;
+      playerName = '';
+      // Close leaderboard too if from game over
+      if (leaderboardFromGameOver) {
+        showLeaderboard = false;
+        leaderboardFromGameOver = false;
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Backspace') {
+      playerName = playerName.slice(0, -1);
+      e.preventDefault();
+      return;
+    }
+    if (e.key.length === 1 && playerName.length < 20) {
+      // Allow alphanumeric and spaces
+      if (/[a-zA-Z0-9 ]/.test(e.key)) {
+        playerName += e.key;
+        e.preventDefault();
+        return;
+      }
+    }
+    e.preventDefault();
+    return;
+  }
+
   if ((e.key === 'p' || e.key === 'P') && state === 'PLAYING') {
     togglePause(); e.preventDefault(); return;
   }
   if ((e.key === 'r' || e.key === 'R') && (state === 'PLAYING' || state === 'RESPAWNING')) {
     generateLevel(currentLevel);
+    lives = 15;
+    livePoints = 0;
+    floatingTexts = [];
     paused = false;
     oopsAlpha = 0;
     respawnTimer = 0;
@@ -344,6 +511,33 @@ C.addEventListener('click', e => {
   clickY = (e.clientY - r.top) * (H / r.height);
   pendingClick = true;
 });
+
+// Mouse wheel for leaderboard scrolling
+C.addEventListener('wheel', e => {
+  if (showLeaderboard) {
+    leaderboardScroll += e.deltaY * 0.5;
+    e.preventDefault();
+  }
+}, { passive: false });
+
+// Touch events for leaderboard scrolling on mobile
+C.addEventListener('touchstart', e => {
+  if (showLeaderboard && e.touches.length === 1) {
+    let r = C.getBoundingClientRect();
+    leaderboardTouchStart = (e.touches[0].clientY - r.top) * (H / r.height);
+    leaderboardTouchLast = leaderboardTouchStart;
+  }
+}, { passive: true });
+
+C.addEventListener('touchmove', e => {
+  if (showLeaderboard && e.touches.length === 1) {
+    let r = C.getBoundingClientRect();
+    let touchY = (e.touches[0].clientY - r.top) * (H / r.height);
+    let delta = leaderboardTouchLast - touchY;
+    leaderboardScroll += delta;
+    leaderboardTouchLast = touchY;
+  }
+}, { passive: true });
 
 
 function consumeClick(x, y, w, h) {
@@ -433,6 +627,8 @@ const THEMES = [
 
 
 let platforms, treats, player, camera, totalTreats, collectedTreats, wingPickups, enemies;
+let levelGroundOffset = 0; // Store the ground offset used when level was generated
+let livePoints = 0; // Real-time score tracked throughout the game
 
 
 function generateLevel(lvl) {
@@ -445,6 +641,7 @@ function generateLevel(lvl) {
 
   // Ground
   const GO = getGroundOffset();
+  levelGroundOffset = GO; // Store for consistent use throughout level
   platforms.push({ x:0, y:H-40-GO, w:200, h:40, type:'solid' });
 
 
@@ -552,7 +749,11 @@ function generateLevel(lvl) {
     hasInvincible: false,
     invincibleTimer: 0,
     dashTimer: 0,
-    dashCooldown: 0
+    dashCooldown: 0,
+    consecutiveJumps: 0,
+    lastJumpTime: 0,
+    airJumpUsed: false,
+    prevJumpPressed: false
   };
   camera = { x: 0 };
   levelTime = 0;
@@ -1990,6 +2191,46 @@ function ensureAudio() {
 }
 
 
+function playJumpSound() {
+  if (!settings.sfx) return;
+  ensureAudio();
+  let ctx = audioCtx;
+  let now = ctx.currentTime;
+
+  // Quick upward "boing" sound - much higher pitched
+  let osc = ctx.createOscillator();
+  let gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(600, now);
+  osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+  gain.gain.setValueAtTime(0.2, now);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(now); osc.stop(now + 0.15);
+
+  // Silly "boop" overtone - higher
+  let osc2 = ctx.createOscillator();
+  let gain2 = ctx.createGain();
+  osc2.type = 'square';
+  osc2.frequency.setValueAtTime(900, now);
+  osc2.frequency.exponentialRampToValueAtTime(1600, now + 0.08);
+  gain2.gain.setValueAtTime(0.08, now);
+  gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+  osc2.connect(gain2); gain2.connect(ctx.destination);
+  osc2.start(now); osc2.stop(now + 0.1);
+
+  // Tiny "pip" at the end for silliness - super high
+  let osc3 = ctx.createOscillator();
+  let gain3 = ctx.createGain();
+  osc3.type = 'sine';
+  osc3.frequency.setValueAtTime(2000, now + 0.08);
+  gain3.gain.setValueAtTime(0.1, now + 0.08);
+  gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+  osc3.connect(gain3); gain3.connect(ctx.destination);
+  osc3.start(now + 0.08); osc3.stop(now + 0.12);
+}
+
+
 function playOopsSound() {
   if (!settings.sfx) return;
   ensureAudio();
@@ -2695,10 +2936,10 @@ function startMusic(level) {
 
 
 // --- GAME LOGIC ---
-const GRAVITY = 0.45;
+const GRAVITY = 0.50;
 const JUMP_FORCE = -9.5;
-const MOVE_SPEED = 3.5;
-const FRICTION = 0.85;
+const MOVE_SPEED = 4.5;
+const FRICTION = 0.86;
 
 
 let respawnTimer = 0;
@@ -2765,7 +3006,18 @@ function updatePlaying(dt) {
 		player.vy = JUMP_FORCE - upgrades.jump * 0.8;
 		player.onGround = false;
 		player.squash = 0.7;
+		player.airJumpUsed = false; // Reset air jump when landing
+		player.consecutiveJumps = 0;
+		player.lastJumpTime = Date.now();
+		playJumpSound();
+	} else if (jumpPressed && !player.onGround && !player.airJumpUsed && !player.prevJumpPressed) {
+		// Mid-air jump: boost upward even if already moving up or down
+		player.vy = (JUMP_FORCE - upgrades.jump * 0.8) * 1.4;
+		player.airJumpUsed = true;
+		player.squash = 0.7;
+		playJumpSound();
 	}
+	player.prevJumpPressed = jumpPressed;
 
 
 	// Wing flying: reduced gravity + can flap in air
@@ -2814,14 +3066,22 @@ function updatePlaying(dt) {
 			player.y = p.y - player.h;
 			player.vy = 0;
 			player.onGround = true;
+			player.airJumpUsed = false; // Reset air jump on landing
 			if (player.squash < 0.9) player.squash = 1.2;
 
 			// Spikes kill on landing
 			if (p.hasSpikes && !player.hasInvincible && state !== 'RESPAWNING') {
-				state = 'RESPAWNING';
-				respawnTimer = 0;
-				oopsAlpha = 1;
-				playOopsSound();
+				lives--;
+				if (lives <= 0) {
+					state = 'GAME_OVER';
+					gameOverTimer = 0;
+					stopMusic();
+				} else {
+					state = 'RESPAWNING';
+					respawnTimer = 0;
+					oopsAlpha = 1;
+					playOopsSound();
+				}
 			}
 
 			// Move with platform
@@ -2847,8 +3107,13 @@ function updatePlaying(dt) {
 			playVictoryJingle();
 			let lt = levelTime / 60;
 			let st = THEMES[currentLevel].starTimes;
-			stars[currentLevel] = lt <= st[2] ? 3 : lt <= st[1] ? 2 : 1;
+			let starRating = lt <= st[2] ? 3 : lt <= st[1] ? 2 : 1;
+			stars[currentLevel] = starRating;
 			if (currentLevel + 1 > unlockedLevel) unlockedLevel = currentLevel + 1;
+			// Award level completion points
+			let levelBonus = 500 + starRating * 250;
+			addPoints(levelBonus);
+			updateLeaderboardIfExists(); // Auto-update leaderboard if player exists
 			addParticles(W/2, H/2, ['#ffe44d','#ff6b6b','#4dc9f6','#a0f0','#0f0','#fff'], 40, 10);
 		}
 	}
@@ -2861,7 +3126,9 @@ function updatePlaying(dt) {
 		if (Math.sqrt(dx*dx + dy*dy) < 28) {
 			tr.collected = true;
 			collectedTreats++;
+			addPoints(100); // +100 per treat
 			addParticles(tr.x - camera.x, tr.y, ['#ffe44d','#ff6b6b','#4dc9f6','#fff'], 12, 5);
+			showFloatingText(tr.x - camera.x, tr.y, '+100', '#ffe44d');
 		}
 	}
 
@@ -2952,19 +3219,30 @@ function updatePlaying(dt) {
 				en.alive = false;
 				player.vy = -6;
 				playSquishSound();
+				addPoints(150);
+				showFloatingText(en.x - camera.x, en.y, '+150', '#ff8800');
 				addParticles(en.x - camera.x, en.y + en.h/2, ['#ff0000','#ff8800','#ffff00','#00ff00','#0088ff','#8800ff'], 15, 8);
 			} else if (player.vy > 0 && player.y + player.h < en.y + en.h/2 + 8) {
 				// Stomp: player falling onto enemy from above
 				en.alive = false;
 				player.vy = -6;
 				playSquishSound();
+				addPoints(150);
+				showFloatingText(en.x - camera.x, en.y, '+150', '#ff8800');
 				addParticles(en.x - camera.x, en.y + en.h/2, [en.color, '#fff', '#ff8'], 12, 8);
 			} else {
 				// Side hit: respawn
-				state = 'RESPAWNING';
-				respawnTimer = 0;
-				oopsAlpha = 1;
-				playOopsSound();
+				lives--;
+				if (lives <= 0) {
+					state = 'GAME_OVER';
+					gameOverTimer = 0;
+					stopMusic();
+				} else {
+					state = 'RESPAWNING';
+					respawnTimer = 0;
+					oopsAlpha = 1;
+					playOopsSound();
+				}
 			}
 		}
 	}
@@ -3003,10 +3281,17 @@ function updatePlaying(dt) {
 			if (camera.x < 0) camera.x = 0;
 			addParticles(player.x - camera.x, player.y, ['#ff0000','#ff8800','#ffff00','#00ff00','#0088ff','#8800ff'], 15, 6);
 		} else {
-			state = 'RESPAWNING';
-			respawnTimer = 0;
-			oopsAlpha = 1;
-			playOopsSound();
+			lives--;
+			if (lives <= 0) {
+				state = 'GAME_OVER';
+				gameOverTimer = 0;
+				stopMusic();
+			} else {
+				state = 'RESPAWNING';
+				respawnTimer = 0;
+				oopsAlpha = 1;
+				playOopsSound();
+			}
 		}
 	}
 }
@@ -3344,19 +3629,35 @@ function drawPlaying() {
 	X.restore();
 
 
+	updateFloatingTexts();
 	drawParticles();
+	drawFloatingTexts();
 
 
-	// HUD
+	// HUD - Top left: Score + Level
+	X.fillStyle = 'rgba(0,0,0,0.45)';
+	drawRoundRect(10, 10, 190, 52, 12);
+
+	// Score
+	X.fillStyle = '#ffd700';
+	X.font = 'bold 20px Segoe UI, sans-serif';
+	X.textAlign = 'left';
+	X.fillText('⭐ ' + livePoints.toLocaleString(), 20, 32);
+
+	// Treats collected
+	X.fillStyle = 'rgba(255,255,255,0.75)';
+	X.font = '13px Segoe UI, sans-serif';
+	X.fillText('🍬 ' + collectedTreats + '/' + totalTreats + '   ⏱ ' + (levelTime/60|0) + 's', 20, 52);
+
+	// Lives counter (top right corner, next to pause button)
+	let livesBgX = W - 105, livesBgY = 10, livesBgW = 50, livesBgH = 36;
 	X.fillStyle = 'rgba(0,0,0,0.4)';
-	drawRoundRect(10, 10, 200, 36, 10);
-	X.fillStyle = '#fff';
-	X.font = 'bold 16px Segoe UI, sans-serif';
-	X.fillText(`${tr(character.treatName.toLowerCase())|| character.treatName}: ${collectedTreats} ⭐`, 20, 34);
-
-
-	let timeStr = (levelTime/60|0) + 's';
-	X.fillText(timeStr, 160, 34);
+	drawRoundRect(livesBgX, livesBgY, livesBgW, livesBgH, 10);
+	X.fillStyle = lives <= 3 ? '#ff6b6b' : '#fff';
+	X.font = 'bold 18px Segoe UI, sans-serif';
+	X.textAlign = 'center';
+	X.fillText('❤️' + lives, livesBgX + livesBgW/2, livesBgY + 25);
+	X.textAlign = 'left';
 
 
 	// Wing timer HUD
@@ -3767,6 +4068,22 @@ function drawTitle() {
     X.fillText(tr('settings'), setBtnX + 32, setBtnY + setBtnH/2 + 5);
     X.restore();
 
+    // Leaderboard button (under settings)
+    let lbBtnX = W - 110, lbBtnY = 104, lbBtnW = 95, lbBtnH = 36;
+    X.fillStyle = 'rgba(255,245,210,0.9)';
+    X.shadowColor = 'rgba(0,0,0,0.15)'; X.shadowBlur = 6; X.shadowOffsetY = 2;
+    drawRoundRect(lbBtnX, lbBtnY, lbBtnW, lbBtnH, 12);
+    X.shadowBlur = 0; X.shadowOffsetY = 0;
+    // Trophy icon
+    X.fillStyle = '#ffd700';
+    X.textAlign = 'center';
+    X.font = '20px Segoe UI, sans-serif';
+    X.fillText('🏆', lbBtnX + 20, lbBtnY + lbBtnH/2 + 7);
+    X.fillStyle = '#5a3a2a';
+    X.font = 'bold 12px Segoe UI, sans-serif';
+    X.fillText(tr('leaderboard'), lbBtnX + 60, lbBtnY + lbBtnH/2 + 4);
+    X.textAlign = 'center';
+
 
     // Settings panel
     if (showSettings) {
@@ -3925,15 +4242,301 @@ function drawTitle() {
     }
 
 
+    // Leaderboard panel
+    if (showLeaderboard) {
+        let panelW = 400, panelH = 480;
+        let panelX = W/2 - panelW/2, panelY = H/2 - panelH/2;
+
+        // Backdrop
+        X.fillStyle = 'rgba(0,0,0,0.4)';
+        X.fillRect(0, 0, W, H);
+
+        // Panel
+        X.fillStyle = '#fffff0';
+        X.shadowColor = 'rgba(0,0,0,0.2)'; X.shadowBlur = 16; X.shadowOffsetY = 4;
+        drawRoundRect(panelX, panelY, panelW, panelH, 16);
+        X.shadowBlur = 0; X.shadowOffsetY = 0;
+
+        // Title
+        X.fillStyle = '#5a3a2a';
+        X.font = 'bold 28px Segoe UI, sans-serif';
+        X.textAlign = 'center';
+        X.fillText('🏆 ' + tr('leaderboard'), W/2, panelY + 40);
+
+        // Divider
+        X.strokeStyle = '#e0d0c0';
+        X.lineWidth = 1;
+        X.beginPath(); X.moveTo(panelX + 20, panelY + 58); X.lineTo(panelX + panelW - 20, panelY + 58); X.stroke();
+
+        if (leaderboard.length === 0) {
+            X.fillStyle = '#8a7a6a';
+            X.font = '16px Segoe UI, sans-serif';
+            X.fillText(tr('noScores'), W/2, panelY + panelH/2);
+        } else {
+            // Header
+            X.textAlign = 'left';
+            X.fillStyle = '#5a3a2a';
+            X.font = 'bold 14px Segoe UI, sans-serif';
+            X.fillText(tr('rank'), panelX + 30, panelY + 85);
+            X.fillText(tr('player'), panelX + 80, panelY + 85);
+            X.fillText(tr('score'), panelX + 240, panelY + 85);
+            X.fillText(tr('starsLabel'), panelX + 330, panelY + 85);
+
+            // Scrollable content area
+            let contentY = panelY + 100;
+            let contentH = 280; // Height of scrollable area
+            let rowHeight = 32;
+            let totalContentH = leaderboard.length * rowHeight;
+            let maxScroll = Math.max(0, totalContentH - contentH);
+            
+            // Clamp scroll
+            leaderboardScroll = Math.max(0, Math.min(leaderboardScroll, maxScroll));
+
+            // Clip region for scrollable area
+            X.save();
+            X.beginPath();
+            X.rect(panelX + 20, contentY, panelW - 40, contentH);
+            X.clip();
+
+            // Draw entries with scroll offset
+            let rowY = contentY - leaderboardScroll + 10;
+            for (let i = 0; i < leaderboard.length; i++) {
+                // Only draw if visible in scroll area
+                if (rowY + rowHeight < contentY || rowY > contentY + contentH) {
+                    rowY += rowHeight;
+                    continue;
+                }
+
+                let entry = leaderboard[i];
+                let bgColor = i === 0 ? 'rgba(255,215,0,0.15)' : i === 1 ? 'rgba(192,192,192,0.15)' : i === 2 ? 'rgba(205,127,50,0.15)' : 'rgba(0,0,0,0.03)';
+                X.fillStyle = bgColor;
+                drawRoundRect(panelX + 20, rowY, panelW - 40, 28, 6);
+
+                // Check for click on this row
+                if (clicked && clickX >= panelX + 20 && clickX <= panelX + panelW - 20 &&
+                    clickY >= rowY && clickY <= rowY + 28) {
+                    selectedPlayerIndex = i;
+                    clicked = false;
+                }
+
+                X.fillStyle = i < 3 ? '#5a3a2a' : '#6a5a4a';
+                X.font = i < 3 ? 'bold 15px Segoe UI, sans-serif' : '14px Segoe UI, sans-serif';
+                
+                // Rank with medal for top 3, otherwise number
+                if (i === 0) X.fillText('🥇', panelX + 25, rowY + 19);
+                else if (i === 1) X.fillText('🥈', panelX + 25, rowY + 19);
+                else if (i === 2) X.fillText('🥉', panelX + 25, rowY + 19);
+                else {
+                    X.fillStyle = i < 3 ? '#5a3a2a' : '#7a6a5a';
+                    X.fillText((i + 1).toString() + '.', panelX + 28, rowY + 19);
+                }
+
+                // Name (truncate if too long)
+                X.fillStyle = i < 3 ? '#5a3a2a' : '#6a5a4a';
+                let name = entry.name.length > 12 ? entry.name.substring(0, 12) + '...' : entry.name;
+                X.fillText(name, panelX + 80, rowY + 19);
+
+                // Score
+                X.fillText(entry.score.toLocaleString(), panelX + 240, rowY + 19);
+
+                // Stars
+                X.fillStyle = '#ffd700';
+                drawStar(panelX + 335, rowY + 14, 5);
+                X.fillStyle = i < 3 ? '#5a3a2a' : '#6a5a4a';
+                X.fillText('×' + entry.stars, panelX + 345, rowY + 19);
+
+                rowY += rowHeight;
+            }
+
+            X.restore();
+
+            // Scroll indicators
+            if (maxScroll > 0) {
+                // Top fade indicator
+                if (leaderboardScroll > 0) {
+                    let fadeGrad = X.createLinearGradient(0, contentY, 0, contentY + 30);
+                    fadeGrad.addColorStop(0, 'rgba(255,255,240,0.9)');
+                    fadeGrad.addColorStop(1, 'rgba(255,255,240,0)');
+                    X.fillStyle = fadeGrad;
+                    X.fillRect(panelX + 20, contentY, panelW - 40, 30);
+                    
+                    // Up arrow
+                    X.fillStyle = '#5a3a2a';
+                    X.font = '16px Segoe UI, sans-serif';
+                    X.textAlign = 'center';
+                    X.fillText('▲', panelX + panelW - 30, contentY + 18);
+                }
+                
+                // Bottom fade indicator
+                if (leaderboardScroll < maxScroll) {
+                    let fadeGrad = X.createLinearGradient(0, contentY + contentH - 30, 0, contentY + contentH);
+                    fadeGrad.addColorStop(0, 'rgba(255,255,240,0)');
+                    fadeGrad.addColorStop(1, 'rgba(255,255,240,0.9)');
+                    X.fillStyle = fadeGrad;
+                    X.fillRect(panelX + 20, contentY + contentH - 30, panelW - 40, 30);
+                    
+                    // Down arrow
+                    X.fillStyle = '#5a3a2a';
+                    X.font = '16px Segoe UI, sans-serif';
+                    X.textAlign = 'center';
+                    X.fillText('▼', panelX + panelW - 30, contentY + contentH - 8);
+                }
+
+                // Scrollbar
+                let scrollbarH = Math.max(30, (contentH / totalContentH) * contentH);
+                let scrollbarY = contentY + (leaderboardScroll / maxScroll) * (contentH - scrollbarH);
+                X.fillStyle = 'rgba(90,58,42,0.3)';
+                drawRoundRect(panelX + panelW - 28, scrollbarY, 6, scrollbarH, 3);
+            }
+
+            X.textAlign = 'left';
+        }
+
+        X.textAlign = 'center';
+
+        // Write your name button (only when from game over)
+        if (leaderboardFromGameOver && !showNameInput) {
+            let writeNameBtnW = 160, writeNameBtnH = 36;
+            let writeNameBtnX = W/2 - writeNameBtnW/2, writeNameBtnY = panelY + panelH - 90;
+            X.fillStyle = '#4a9e4a';
+            drawRoundRect(writeNameBtnX, writeNameBtnY, writeNameBtnW, writeNameBtnH, 10);
+            X.fillStyle = '#fff';
+            X.font = 'bold 15px Segoe UI, sans-serif';
+            X.fillText('✏️ ' + tr('writeYourName'), W/2, writeNameBtnY + writeNameBtnH/2 + 5);
+
+            if (consumeClick(writeNameBtnX, writeNameBtnY, writeNameBtnW, writeNameBtnH)) {
+                showNameInput = true;
+            }
+        }
+
+        // Close button
+        let closeBtnW = 80, closeBtnH = 32;
+        let closeBtnY = leaderboardFromGameOver && !showNameInput ? panelY + panelH - 46 : panelY + panelH - 46;
+        let closeBtnX = W/2 - closeBtnW/2;
+        X.fillStyle = '#ff6b8a';
+        drawRoundRect(closeBtnX, closeBtnY, closeBtnW, closeBtnH, 10);
+        X.fillStyle = '#fff';
+        X.font = 'bold 14px Segoe UI, sans-serif';
+        X.fillText(tr('close'), W/2, closeBtnY + closeBtnH/2 + 5);
+
+        if (consumeClick(closeBtnX, closeBtnY, closeBtnW, closeBtnH)) {
+            showLeaderboard = false;
+            leaderboardScroll = 0; // Reset scroll when closing
+            selectedPlayerIndex = -1;
+            leaderboardFromGameOver = false;
+        }
+
+        // Click outside panel to close
+        if (clicked) {
+            if (clickX < panelX || clickX > panelX + panelW || clickY < panelY || clickY > panelY + panelH) {
+                showLeaderboard = false;
+                leaderboardScroll = 0; // Reset scroll when closing
+                selectedPlayerIndex = -1;
+                leaderboardFromGameOver = false;
+                clicked = false;
+            }
+        }
+    }
+
+    // Player detail view (shown over leaderboard)
+    if (selectedPlayerIndex >= 0 && selectedPlayerIndex < leaderboard.length) {
+        let entry = leaderboard[selectedPlayerIndex];
+        let detailW = 340, detailH = 260;
+        let detailX = W/2 - detailW/2, detailY = H/2 - detailH/2;
+
+        // Backdrop
+        X.fillStyle = 'rgba(0,0,0,0.6)';
+        X.fillRect(0, 0, W, H);
+
+        // Panel
+        X.fillStyle = '#fffff0';
+        X.shadowColor = 'rgba(0,0,0,0.3)'; X.shadowBlur = 20; X.shadowOffsetY = 6;
+        drawRoundRect(detailX, detailY, detailW, detailH, 16);
+        X.shadowBlur = 0; X.shadowOffsetY = 0;
+
+        // Rank medal/number at top
+        X.textAlign = 'center';
+        if (selectedPlayerIndex === 0) {
+            X.font = '40px Segoe UI, sans-serif';
+            X.fillText('🥇', W/2, detailY + 50);
+        } else if (selectedPlayerIndex === 1) {
+            X.font = '40px Segoe UI, sans-serif';
+            X.fillText('🥈', W/2, detailY + 50);
+        } else if (selectedPlayerIndex === 2) {
+            X.font = '40px Segoe UI, sans-serif';
+            X.fillText('🥉', W/2, detailY + 50);
+        } else {
+            X.fillStyle = '#5a3a2a';
+            X.font = 'bold 32px Segoe UI, sans-serif';
+            X.fillText('#' + (selectedPlayerIndex + 1), W/2, detailY + 50);
+        }
+
+        // Player name
+        X.fillStyle = '#5a3a2a';
+        X.font = 'bold 24px Segoe UI, sans-serif';
+        X.fillText(entry.name, W/2, detailY + 90);
+
+        // Score
+        X.fillStyle = '#6a5a4a';
+        X.font = '20px Segoe UI, sans-serif';
+        X.fillText(tr('score') + ': ' + entry.score.toLocaleString(), W/2, detailY + 125);
+
+        // Stars
+        X.fillStyle = '#ffd700';
+        drawStar(W/2 - 30, detailY + 145, 8);
+        X.fillStyle = '#6a5a4a';
+        X.font = '18px Segoe UI, sans-serif';
+        X.fillText('×' + entry.stars, W/2 + 10, detailY + 155);
+
+        // Delete button
+        let delBtnW = 120, delBtnH = 36;
+        let delBtnX = W/2 - delBtnW/2, delBtnY = detailY + detailH - 80;
+        X.fillStyle = '#e74c3c';
+        drawRoundRect(delBtnX, delBtnY, delBtnW, delBtnH, 10);
+        X.fillStyle = '#fff';
+        X.font = 'bold 15px Segoe UI, sans-serif';
+        X.fillText('🗑️ Delete', W/2, delBtnY + delBtnH/2 + 5);
+
+        if (consumeClick(delBtnX, delBtnY, delBtnW, delBtnH)) {
+            deleteFromLeaderboard(selectedPlayerIndex);
+            selectedPlayerIndex = -1;
+        }
+
+        // Back button
+        let backBtnW = 100, backBtnH = 32;
+        let backBtnX = W/2 - backBtnW/2, backBtnY = detailY + detailH - 38;
+        X.fillStyle = '#5a7abf';
+        drawRoundRect(backBtnX, backBtnY, backBtnW, backBtnH, 10);
+        X.fillStyle = '#fff';
+        X.font = 'bold 14px Segoe UI, sans-serif';
+        X.fillText('← ' + tr('back'), W/2, backBtnY + backBtnH/2 + 5);
+
+        if (consumeClick(backBtnX, backBtnY, backBtnW, backBtnH)) {
+            selectedPlayerIndex = -1;
+        }
+
+        // Click outside to close
+        if (clicked) {
+            if (clickX < detailX || clickX > detailX + detailW || clickY < detailY || clickY > detailY + detailH) {
+                selectedPlayerIndex = -1;
+                clicked = false;
+            }
+        }
+    }
+
+
     X.textAlign = 'left';
 
 
-    if (!showSettings) {
+    if (!showSettings && !showLeaderboard) {
         if (consumeClick(shopBtnX, shopBtnY, shopBtnW, shopBtnH)) {
             state = 'SHOP';
         }
         if (consumeClick(setBtnX, setBtnY, setBtnW, setBtnH)) {
             showSettings = true;
+        }
+        if (consumeClick(lbBtnX, lbBtnY, lbBtnW, lbBtnH)) {
+            showLeaderboard = true;
         }
         if (consumeClick(btnX - 10, btnY - 10, btnW + 20, btnH + 20)) {
             startMenuMusic();
@@ -4598,6 +5201,9 @@ function drawLevelSelect() {
         if (!locked && consumeClick(bx, by, bw, bh)) {
             currentLevel = i;
             generateLevel(i);
+            lives = 15; // Reset lives when starting a level
+            livePoints = 0; // Reset score
+            floatingTexts = []; // Clear floating texts
             paused = false;
             state = 'COUNTDOWN';
             countdownTimer = 180;
@@ -4719,12 +5325,12 @@ function drawGameComplete() {
     X.textAlign = 'center';
     X.fillStyle = '#fff';
     X.font = 'bold 48px Segoe UI, sans-serif';
-    X.fillText(tr('youWin'), W/2, 80);
+    X.fillText(tr('youBeatGame'), W/2, 80);
 
 
-    X.font = '20px Segoe UI, sans-serif';
-    X.fillStyle = 'rgba(255,255,255,0.8)';
-    X.fillText(tr('allLevels'), W/2, 120);
+    X.font = '18px Segoe UI, sans-serif';
+    X.fillStyle = 'rgba(255,255,255,0.9)';
+    X.fillText(tr('notRagebait'), W/2, 115);
 
 
     // All characters dancing
@@ -4735,6 +5341,13 @@ function drawGameComplete() {
 
     // Total stars
     let totalStars = stars.reduce((a,b) => a+b, 0);
+    let finalScore = calculateScore();
+    
+    // Score display
+    X.fillStyle = '#fff';
+    X.font = 'bold 28px Segoe UI, sans-serif';
+    X.fillText(`${tr('yourScore')}: ${finalScore.toLocaleString()}`, W/2, 300);
+    
     X.fillStyle = '#ffd700';
     X.font = 'bold 24px Segoe UI, sans-serif';
     X.fillText(`${tr('totalStarsLabel')}: ${totalStars}/${THEMES.length * 3}`, W/2, 330);
@@ -4751,23 +5364,206 @@ function drawGameComplete() {
 
     // Buttons
     X.fillStyle = '#fff';
-    drawRoundRect(W/2 - 140, 400, 120, 40, 10);
+    drawRoundRect(W/2 - 190, 400, 120, 40, 10);
     X.fillStyle = '#764ba2';
     X.font = 'bold 14px Segoe UI, sans-serif';
-    X.fillText(tr('playAgain'), W/2 - 80, 425);
-
+    X.fillText(tr('playAgain'), W/2 - 130, 425);
 
     X.fillStyle = '#fff';
-    drawRoundRect(W/2 + 20, 400, 120, 40, 10);
+    drawRoundRect(W/2 - 60, 400, 120, 40, 10);
     X.fillStyle = '#764ba2';
-    X.fillText(tr('levels'), W/2 + 80, 425);
+    X.fillText(tr('levels'), W/2, 425);
+
+    // Submit to Leaderboard button
+    X.fillStyle = '#ffd700';
+    drawRoundRect(W/2 + 70, 400, 120, 40, 10);
+    X.fillStyle = '#764ba2';
+    X.fillText('🏆 ' + tr('submit'), W/2 + 130, 425);
 
 
-    if (gameCompleteTimer > 60 && consumeClick(W/2-140, 400, 120, 40)) {
-        currentLevel = 0; generateLevel(0); paused = false; state = 'COUNTDOWN'; countdownTimer = 180; startMusic(0);
+    if (gameCompleteTimer > 60 && consumeClick(W/2-190, 400, 120, 40)) {
+        currentLevel = 0; generateLevel(0); lives = 15; livePoints = 0; floatingTexts = []; paused = false; state = 'COUNTDOWN'; countdownTimer = 180; startMusic(0);
     }
-    if (gameCompleteTimer > 60 && consumeClick(W/2+20, 400, 120, 40)) { startMenuMusic(); state = 'LEVEL_SELECT'; }
+    if (gameCompleteTimer > 60 && consumeClick(W/2-60, 400, 120, 40)) { startMenuMusic(); state = 'LEVEL_SELECT'; }
+    if (gameCompleteTimer > 60 && consumeClick(W/2+70, 400, 120, 40)) {
+        showNameInput = true;
+    }
 
+
+    X.textAlign = 'left';
+
+    // Name input overlay
+    if (showNameInput) {
+        let panelW = 350, panelH = 200;
+        let panelX = W/2 - panelW/2, panelY = H/2 - panelH/2;
+
+        // Backdrop
+        X.fillStyle = 'rgba(0,0,0,0.5)';
+        X.fillRect(0, 0, W, H);
+
+        // Panel
+        X.fillStyle = '#fffff0';
+        X.shadowColor = 'rgba(0,0,0,0.3)'; X.shadowBlur = 20; X.shadowOffsetY = 6;
+        drawRoundRect(panelX, panelY, panelW, panelH, 16);
+        X.shadowBlur = 0; X.shadowOffsetY = 0;
+
+        X.textAlign = 'center';
+        X.fillStyle = '#5a3a2a';
+        X.font = 'bold 22px Segoe UI, sans-serif';
+        X.fillText(tr('enterName'), W/2, panelY + 40);
+
+        // Input box
+        let inputW = 280, inputH = 40;
+        let inputX = W/2 - inputW/2, inputY = panelY + 70;
+        X.fillStyle = '#fff';
+        X.strokeStyle = '#d0c0b0';
+        X.lineWidth = 2;
+        drawRoundRect(inputX, inputY, inputW, inputH, 8);
+        X.strokeRect(inputX, inputY, inputW, inputH);
+
+        // Display name being typed
+        X.fillStyle = '#5a3a2a';
+        X.font = '18px Segoe UI, sans-serif';
+        X.textAlign = 'left';
+        let displayText = playerName || '';
+        // Cursor blink
+        if (Math.floor(Date.now() / 500) % 2 === 0) displayText += '|';
+        X.fillText(displayText, inputX + 12, inputY + inputH/2 + 6);
+
+        X.textAlign = 'center';
+
+        // Submit button
+        let submitW = 100, submitH = 36;
+        let submitX = W/2 - submitW/2, submitY = panelY + 135;
+        X.fillStyle = playerName.length > 0 ? '#4a9e4a' : '#ccc';
+        drawRoundRect(submitX, submitY, submitW, submitH, 10);
+        X.fillStyle = '#fff';
+        X.font = 'bold 16px Segoe UI, sans-serif';
+        X.fillText(tr('submit'), W/2, submitY + submitH/2 + 6);
+
+        if (playerName.length > 0 && consumeClick(submitX, submitY, submitW, submitH)) {
+            let finalScore = calculateScore();
+            let totalStars = stars.reduce((a,b) => a+b, 0);
+            addToLeaderboard(playerName, finalScore, totalStars);
+            lastSubmittedName = playerName; // Remember this name for auto-updates
+            showNameInput = false;
+            playerName = '';
+            // Close leaderboard too if from game over
+            if (leaderboardFromGameOver) {
+                showLeaderboard = false;
+                leaderboardFromGameOver = false;
+            }
+        }
+
+        // Click outside to cancel
+        if (clicked) {
+            if (clickX < panelX || clickX > panelX + panelW || clickY < panelY || clickY > panelY + panelH) {
+                showNameInput = false;
+                clicked = false;
+            }
+        }
+    }
+}
+
+
+function drawGameOver() {
+    gameOverTimer++;
+    // Dark gradient background
+    let grad = X.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#2c1654'); 
+    grad.addColorStop(1, '#1a0a3e');
+    X.fillStyle = grad; 
+    X.fillRect(0, 0, W, H);
+
+    // Floating sad particles
+    if (gameOverTimer % 10 === 0) {
+        addParticles(Math.random()*W, -10, ['#6a5acd','#8a7abf','#4a4a8a','#5a5a9a'], 2, 3);
+    }
+
+    updateParticles();
+    drawParticles();
+
+    // "GAME OVER!" in bubbly letters
+    X.textAlign = 'center';
+    
+    // Bubble effect - multiple layers with slight offsets
+    let bounce = Math.sin(gameOverTimer / 30) * 8;
+    
+    // Shadow layers for depth
+    for (let i = 5; i > 0; i--) {
+        X.fillStyle = `rgba(0,0,0,${0.1 * i})`;
+        X.font = 'bold 72px Segoe UI, sans-serif';
+        X.fillText(tr('gameOver'), W/2 + i*2, 130 + bounce + i*2);
+    }
+    
+    // Main text with bubbly outline
+    X.strokeStyle = '#ff6b8a';
+    X.lineWidth = 8;
+    X.font = 'bold 72px Segoe UI, sans-serif';
+    X.strokeText(tr('gameOver'), W/2, 130 + bounce);
+    
+    // Inner gradient fill
+    let textGrad = X.createLinearGradient(0, 90, 0, 160);
+    textGrad.addColorStop(0, '#ffd1dc');
+    textGrad.addColorStop(1, '#ff9ebb');
+    X.fillStyle = textGrad;
+    X.fillText(tr('gameOver'), W/2, 130 + bounce);
+
+    // Subtitle
+    X.fillStyle = 'rgba(255,255,255,0.8)';
+    X.font = '20px Segoe UI, sans-serif';
+    X.fillText(tr('outOfLives'), W/2, 180 + bounce);
+
+    // Character crying
+    if (character) {
+        drawCharacter(W/2, 270, character, 2, 1, 1, Date.now()/400, false);
+        // Tears
+        if (gameOverTimer % 60 < 30) {
+            X.fillStyle = '#4dc9f6';
+            X.beginPath(); 
+            X.arc(W/2 - 15, 250, 4, 0, Math.PI*2); 
+            X.fill();
+            X.beginPath(); 
+            X.arc(W/2 + 15, 250, 4, 0, Math.PI*2); 
+            X.fill();
+        }
+    }
+
+    // Final score display
+    let finalScore = calculateScore();
+    let totalStars = stars.reduce((a,b) => a+b, 0);
+    X.fillStyle = '#fff';
+    X.font = 'bold 24px Segoe UI, sans-serif';
+    X.fillText(`${tr('yourScore')}: ${finalScore.toLocaleString()}`, W/2, 350);
+    
+    X.fillStyle = '#ffd700';
+    X.font = '20px Segoe UI, sans-serif';
+    X.fillText(`⭐ ${totalStars}/${THEMES.length * 3}`, W/2, 380);
+
+    // Add to leaderboard button
+    if (gameOverTimer > 60) {
+        let btnW = 280, btnH = 50;
+        let btnX = W/2 - btnW/2, btnY = 410;
+        
+        let pulse = 1 + Math.sin(gameOverTimer / 15) * 0.05;
+        let displayW = btnW * pulse;
+        let displayH = btnH * pulse;
+        let displayX = W/2 - displayW/2;
+        
+        X.fillStyle = '#4a9e4a';
+        drawRoundRect(displayX, btnY, displayW, displayH, 12);
+        X.fillStyle = '#fff';
+        X.font = 'bold 18px Segoe UI, sans-serif';
+        X.fillText('🏆 ' + tr('addToLeaderboard'), W/2, btnY + displayH/2 + 6);
+
+        // Use original size for click detection (not pulsed)
+        if (consumeClick(btnX, btnY, btnW, btnH)) {
+            state = 'TITLE'; // Go to title first
+            showLeaderboard = true;
+            leaderboardFromGameOver = true;
+            // Don't automatically show name input, let the button handle it
+        }
+    }
 
     X.textAlign = 'left';
 }
@@ -4828,7 +5624,7 @@ function drawRespawning() {
 
 
     if (respawnTimer > 80) {
-        player.x = 60; player.y = H - 80 - getGroundOffset(); player.vx = 0; player.vy = 0;
+        player.x = 60; player.y = H - 80 - levelGroundOffset; player.vx = 0; player.vy = 0;
         camera.x = 0;
         // Reset enemies
         for (let en of enemies) {
@@ -4838,6 +5634,75 @@ function drawRespawning() {
         }
         state = 'PLAYING';
     }
+}
+
+
+function drawNameInputOverlay() {
+    let panelW = 350, panelH = 200;
+    let panelX = W/2 - panelW/2, panelY = H/2 - panelH/2;
+
+    // Backdrop
+    X.fillStyle = 'rgba(0,0,0,0.5)';
+    X.fillRect(0, 0, W, H);
+
+    // Panel
+    X.fillStyle = '#fffff0';
+    X.shadowColor = 'rgba(0,0,0,0.3)'; X.shadowBlur = 20; X.shadowOffsetY = 6;
+    drawRoundRect(panelX, panelY, panelW, panelH, 16);
+    X.shadowBlur = 0; X.shadowOffsetY = 0;
+
+    X.textAlign = 'center';
+    X.fillStyle = '#5a3a2a';
+    X.font = 'bold 22px Segoe UI, sans-serif';
+    X.fillText(tr('enterName'), W/2, panelY + 40);
+
+    // Input box
+    let inputW = 280, inputH = 40;
+    let inputX = W/2 - inputW/2, inputY = panelY + 70;
+    X.fillStyle = '#fff';
+    X.strokeStyle = '#d0c0b0';
+    X.lineWidth = 2;
+    drawRoundRect(inputX, inputY, inputW, inputH, 8);
+    X.strokeRect(inputX, inputY, inputW, inputH);
+
+    // Display name being typed
+    X.fillStyle = '#5a3a2a';
+    X.font = '18px Segoe UI, sans-serif';
+    X.textAlign = 'left';
+    let displayText = playerName || '';
+    // Cursor blink
+    if (Math.floor(Date.now() / 500) % 2 === 0) displayText += '|';
+    X.fillText(displayText, inputX + 12, inputY + inputH/2 + 6);
+
+    X.textAlign = 'center';
+
+    // Submit button
+    let submitW = 100, submitH = 36;
+    let submitX = W/2 - submitW/2, submitY = panelY + 135;
+    X.fillStyle = playerName.length > 0 ? '#4a9e4a' : '#ccc';
+    drawRoundRect(submitX, submitY, submitW, submitH, 10);
+    X.fillStyle = '#fff';
+    X.font = 'bold 16px Segoe UI, sans-serif';
+    X.fillText(tr('submit'), W/2, submitY + submitH/2 + 6);
+
+    if (playerName.length > 0 && consumeClick(submitX, submitY, submitW, submitH)) {
+        let finalScore = calculateScore();
+        let totalStars = stars.reduce((a,b) => a+b, 0);
+        addToLeaderboard(playerName, finalScore, totalStars);
+        showNameInput = false;
+        playerName = '';
+    }
+
+    // Click outside to cancel
+    if (clicked) {
+        if (clickX < panelX || clickX > panelX + panelW || clickY < panelY || clickY > panelY + panelH) {
+            showNameInput = false;
+            playerName = '';
+            clicked = false;
+        }
+    }
+    
+    X.textAlign = 'left';
 }
 
 
@@ -4859,9 +5724,14 @@ function gameLoop() {
         case 'LEVEL_SELECT': drawLevelSelect(); break;
         case 'COUNTDOWN': drawCountdown(); break;
         case 'PLAYING': if (!paused) { updatePlaying(1); updateParticles(); } drawPlaying(); break;
-        case 'RESPAWNING': updatePlaying(1); updateParticles(); drawRespawning(); break;
-        case 'LEVEL_COMPLETE': updateParticles(); drawLevelComplete(); break;
+        case 'RESPAWNING': updatePlaying(1); updateParticles(); drawRespawning(); break;        case 'LEVEL_COMPLETE': updateParticles(); drawLevelComplete(); break;
         case 'GAME_COMPLETE': drawGameComplete(); break;
+        case 'GAME_OVER': drawGameOver(); break;
+    }
+
+    // Global name input overlay (can be triggered from anywhere)
+    if (showNameInput && state !== 'GAME_COMPLETE' && state !== 'GAME_OVER') {
+        drawNameInputOverlay();
     }
 
 
