@@ -53,15 +53,13 @@ canvas { display:block; border-radius:12px; image-rendering:pixelated; }
 #landscape-controls .touch-btn { width:62px; height:62px; font-size:24px; }
 #landscape-controls #btn-dash2 { width:54px; height:54px; font-size:20px; }
 
-/* Show portrait controls on touch/small portrait */
-@media (pointer:coarse) and (orientation:portrait),
-       (max-width:600px) and (orientation:portrait) {
+/* Show portrait controls only on small portrait screens */
+@media (max-width:600px) and (orientation:portrait) {
   #portrait-controls { display:flex; }
 }
 
-/* Show landscape controls on touch/small landscape */
-@media (pointer:coarse) and (orientation:landscape),
-       (max-height:600px) and (orientation:landscape) {
+/* Show landscape controls only on small landscape screens */
+@media (max-height:600px) and (orientation:landscape) {
   #landscape-controls { display:flex; }
 }
 </style>
@@ -97,23 +95,32 @@ const X = C.getContext('2d');
 const W = 880, H = 500;
 // On mobile landscape, raise ground so touch buttons don't cover the player
 function getGroundOffset() {
-  const isTouch = window.matchMedia('(pointer:coarse)').matches || Math.min(window.innerWidth, window.innerHeight) <= 600;
+  const isSmallScreen = window.innerWidth <= 600 || window.innerHeight <= 600;
   const isLandscape = window.innerWidth > window.innerHeight;
-  return (isTouch && isLandscape) ? 90 : 0;
+  return (isSmallScreen && isLandscape) ? 90 : 0;
 }
 C.width = W; C.height = H;
 
 
 // Scale canvas to fit screen
 function resize() {
-  const isTouch = window.matchMedia('(pointer:coarse)').matches || Math.min(window.innerWidth, window.innerHeight) <= 600;
+  const isSmallScreen = window.innerWidth <= 600 || window.innerHeight <= 600;
   const isLandscape = window.innerWidth > window.innerHeight;
+  
+  // Force hide mobile controls on desktop
+  const portraitControls = document.getElementById('portrait-controls');
+  const landscapeControls = document.getElementById('landscape-controls');
+  if (!isSmallScreen) {
+    if (portraitControls) portraitControls.style.display = 'none';
+    if (landscapeControls) landscapeControls.style.display = 'none';
+  }
+  
   let availW, availH;
-  if (isTouch && isLandscape) {
+  if (isSmallScreen && isLandscape) {
     // Landscape: buttons on sides — reserve ~160px total (80 each side)
     availW = window.innerWidth - 160;
     availH = window.innerHeight;
-  } else if (isTouch) {
+  } else if (isSmallScreen) {
     // Portrait: buttons below — reserve 110px
     availW = window.innerWidth;
     availH = window.innerHeight - 110;
@@ -886,11 +893,11 @@ function drawCharacter(cx, cy, ch, scale, facing, squash, walkFrame, celebrate) 
     X.beginPath(); X.moveTo(8,-13); X.lineTo(5,-21); X.lineTo(2,-13); X.fill();
   } else if (ch.type === 'bunny') {
     X.fillStyle = ch.earColor;
-    X.beginPath(); X.ellipse(-6,-28, 5, 14, -0.2, 0, Math.PI*2); X.fill();
-    X.beginPath(); X.ellipse(6,-28, 5, 14, 0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(-6,-24, 5, 11, -0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(6,-24, 5, 11, 0.2, 0, Math.PI*2); X.fill();
     X.fillStyle = '#f8c0c0';
-    X.beginPath(); X.ellipse(-6,-28, 3, 10, -0.2, 0, Math.PI*2); X.fill();
-    X.beginPath(); X.ellipse(6,-28, 3, 10, 0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(-6,-24, 3, 8, -0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(6,-24, 3, 8, 0.2, 0, Math.PI*2); X.fill();
   } else if (ch.type === 'panda') {
     // Round black ears
     X.fillStyle = '#2d2d2d';
@@ -2411,6 +2418,7 @@ for (let n of notes) {
 }
 
 
+
 // --- MUSIC ---
 let musicNodes = []; // active oscillators/gains to stop
 let musicInterval = null;
@@ -3012,7 +3020,7 @@ function updatePlaying(dt) {
 		playJumpSound();
 	} else if (jumpPressed && !player.onGround && !player.airJumpUsed && !player.prevJumpPressed) {
 		// Mid-air jump: boost upward even if already moving up or down
-		player.vy = (JUMP_FORCE - upgrades.jump * 0.8) * 1.4;
+		player.vy = (JUMP_FORCE - upgrades.jump * 0.8) * 1.1;
 		player.airJumpUsed = true;
 		player.squash = 0.7;
 		playJumpSound();
@@ -3131,6 +3139,8 @@ function updatePlaying(dt) {
 			showFloatingText(tr.x - camera.x, tr.y, '+100', '#ffe44d');
 		}
 	}
+
+
 
 
 	// Collect wing pickups
@@ -3388,7 +3398,13 @@ function drawPlaying() {
 			X.fillStyle = 'rgba(255,220,0,0.18)';
 			X.beginPath(); X.ellipse(flagX, flagY + 8, p.w/2, 10, 0, 0, Math.PI*2); X.fill();
 		}
+	}
+
+	// Platform timers
+	for (let p of platforms) {
 		if (p.type === 'blinking' && p.blinkOn && currentLevel < THEMES.length - 2) {
+			let px = p.x, py = p.y;
+			if (p.type === 'moving') px = p.origX + Math.sin(t * p.moveSpeed) * p.moveRange * p.moveDir;
 			let phase = p.blinkTimer % (2 * Math.PI);
 			let offThreshold = Math.PI + Math.asin(0.3);
 			let framesLeft;
@@ -3413,6 +3429,7 @@ function drawPlaying() {
 	for (let tr of treats) {
 		if (!tr.collected) drawTreat(tr.x, tr.y, character.treat, tr.bob);
 	}
+
 
 
 	// Wing pickups
@@ -3701,11 +3718,11 @@ function drawPlaying() {
 
 	// Level name
 	X.fillStyle = 'rgba(0,0,0,0.3)';
-	drawRoundRect(W/2 - 80, 10, 160, 28, 8);
+	drawRoundRect(W/2 - 100, 10, 200, 28, 8);
 	X.fillStyle = '#fff';
 	X.font = '14px Segoe UI, sans-serif';
 	X.textAlign = 'center';
-	X.fillText(tr(theme.nameKey || theme.name), W/2, 30);
+	X.fillText(`Level ${currentLevel + 1}: ${tr(theme.nameKey || theme.name)}`, W/2, 30);
 	X.textAlign = 'left';
 
 
@@ -3721,6 +3738,7 @@ function drawPlaying() {
 	if (consumeClick(pbx, pby, pbw, pbh)) {
 		togglePause();
 	}
+
 
 
 	// Pause overlay
@@ -5247,8 +5265,8 @@ function drawLevelComplete() {
     X.fillText(tr('levelComplete'), W/2, H/2 - 85);
 
 
-    // Dancing character
-    drawCharacter(W/2, H/2 - 30, character, 2, 1, 1, Date.now()/200, true);
+    // Dancing character - moved down 20px to avoid overlap with title
+    drawCharacter(W/2, H/2 - 10, character, 2, 1, 1, Date.now()/200, true);
 
 
     // Stars
@@ -5542,7 +5560,7 @@ function drawGameOver() {
 
     // Add to leaderboard button
     if (gameOverTimer > 60) {
-        let btnW = 280, btnH = 50;
+        let btnW = 380, btnH = 50;
         let btnX = W/2 - btnW/2, btnY = 410;
         
         let pulse = 1 + Math.sin(gameOverTimer / 15) * 0.05;
@@ -5553,7 +5571,7 @@ function drawGameOver() {
         X.fillStyle = '#4a9e4a';
         drawRoundRect(displayX, btnY, displayW, displayH, 12);
         X.fillStyle = '#fff';
-        X.font = 'bold 18px Segoe UI, sans-serif';
+        X.font = 'bold 17px Segoe UI, sans-serif';
         X.fillText('🏆 ' + tr('addToLeaderboard'), W/2, btnY + displayH/2 + 6);
 
         // Use original size for click detection (not pulsed)
@@ -5624,8 +5642,12 @@ function drawRespawning() {
 
 
     if (respawnTimer > 80) {
-        player.x = 60; player.y = H - 80 - levelGroundOffset; player.vx = 0; player.vy = 0;
+        // Respawn at start
+        player.x = 60;
+        player.y = H - 80 - levelGroundOffset;
         camera.x = 0;
+        player.vx = 0;
+        player.vy = 0;
         // Reset enemies
         for (let en of enemies) {
             en.alive = true;
