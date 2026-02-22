@@ -89,8 +89,12 @@ canvas { display:block; border-radius:12px; image-rendering:pixelated; }
   </div>
 </div>
 
+<!-- Hidden input for mobile keyboard -->
+<input type="text" id="mobile-name-input" maxlength="20" autocomplete="off" style="position:absolute; left:-9999px; opacity:0;">
+
 <script>
 const C = document.getElementById('c');
+const mobileInput = document.getElementById('mobile-name-input');
 const X = C.getContext('2d');
 const W = 880, H = 500;
 // On mobile landscape, raise ground so touch buttons don't cover the player
@@ -416,6 +420,7 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       showNameInput = false;
       playerName = '';
+      mobileInput.blur();
       e.preventDefault();
       return;
     }
@@ -426,6 +431,7 @@ document.addEventListener('keydown', e => {
       lastSubmittedName = playerName; // Remember this name for auto-updates
       showNameInput = false;
       playerName = '';
+      mobileInput.blur();
       // Close leaderboard too if from game over
       if (leaderboardFromGameOver) {
         showLeaderboard = false;
@@ -449,6 +455,11 @@ document.addEventListener('keydown', e => {
     }
     e.preventDefault();
     return;
+  }
+
+  // Mobile input sync
+  if (showNameInput) {
+    mobileInput.value = playerName;
   }
 
   if ((e.key === 'p' || e.key === 'P') && state === 'PLAYING') {
@@ -484,6 +495,21 @@ document.addEventListener('keydown', e => {
   keys[e.key] = true; e.preventDefault();
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// Mobile input handling
+mobileInput.addEventListener('input', e => {
+  if (showNameInput) {
+    playerName = mobileInput.value.slice(0, 20); // Max 20 chars
+  }
+});
+
+mobileInput.addEventListener('blur', () => {
+  // Re-focus if name input is still showing (prevent keyboard from closing)
+  if (showNameInput) {
+    setTimeout(() => mobileInput.focus(), 100);
+  }
+});
+
 
 
 // Touch controls
@@ -633,7 +659,7 @@ const THEMES = [
 ];
 
 
-let platforms, treats, player, camera, totalTreats, collectedTreats, wingPickups, enemies;
+let platforms, treats, player, camera, totalTreats, collectedTreats, wingPickups, enemies, slingshots, projectiles, steaks;
 let levelGroundOffset = 0; // Store the ground offset used when level was generated
 let livePoints = 0; // Real-time score tracked throughout the game
 
@@ -760,7 +786,11 @@ function generateLevel(lvl) {
     consecutiveJumps: 0,
     lastJumpTime: 0,
     airJumpUsed: false,
-    prevJumpPressed: false
+    prevJumpPressed: false,
+    hasSlingshot: false,
+    slingshotCooldown: 0,
+    slingshotTimer: 0, // Duration remaining (900 frames = 15 seconds at 60fps)
+    sizeState: 'normal' // 'small', 'normal', or 'big'
   };
   camera = { x: 0 };
   levelTime = 0;
@@ -844,6 +874,62 @@ function generateLevel(lvl) {
       });
     }
   }
+
+  // Steak pickups on every 3rd level (levels 3, 6, 9)
+  steaks = [];
+  if ((lvl + 1) % 3 === 0) {
+    // Find a good solid platform for steak
+    let solidPlatforms = [];
+    for (let i = 1; i < platforms.length - 1; i++) {
+      let p = platforms[i];
+      if (p.type === 'solid' && !p.hasSpikes && !p.isEnd) {
+        solidPlatforms.push(p);
+      }
+    }
+    
+    if (solidPlatforms.length > 0) {
+      // Place steak around 25% into the level
+      let steakIdx = Math.floor(solidPlatforms.length * 0.25);
+      steakIdx = Math.max(0, Math.min(steakIdx, solidPlatforms.length - 1));
+      let sp = solidPlatforms[steakIdx];
+      steaks.push({
+        x: sp.origX + sp.w / 2,
+        y: sp.origY - 35,
+        collected: false,
+        bob: Math.random() * Math.PI * 2
+      });
+    }
+  }
+
+  // Slingshot pickups on levels with enemies (every other level)
+  slingshots = [];
+  projectiles = [];
+  if (enemies.length > 0) {
+    // Find solid platforms for slingshot placement (not moving, not blinking)
+    let solidPlatforms = [];
+    for (let i = 1; i < platforms.length - 1; i++) {
+      let p = platforms[i];
+      if (p.type === 'solid' && !p.hasSpikes && !p.isEnd) {
+        solidPlatforms.push(p);
+      }
+    }
+    
+    // Place only 1 slingshot on a solid platform
+    if (solidPlatforms.length > 0) {
+      let slingshotCount = 1; // Only one slingshot per level
+      let spacing = Math.floor(solidPlatforms.length / (slingshotCount + 1));
+      let pi = spacing * 1;
+      pi = Math.max(0, Math.min(pi, solidPlatforms.length - 1));
+      let sp = solidPlatforms[pi];
+      // Use origX and origY which never change
+      slingshots.push({ 
+        x: sp.origX + sp.w / 2,
+        y: sp.origY - 30,
+        collected: false, 
+        bob: Math.random()*Math.PI*2 
+      });
+    }
+  }
 }
 
 
@@ -893,11 +979,11 @@ function drawCharacter(cx, cy, ch, scale, facing, squash, walkFrame, celebrate) 
     X.beginPath(); X.moveTo(8,-13); X.lineTo(5,-21); X.lineTo(2,-13); X.fill();
   } else if (ch.type === 'bunny') {
     X.fillStyle = ch.earColor;
-    X.beginPath(); X.ellipse(-6,-24, 5, 11, -0.2, 0, Math.PI*2); X.fill();
-    X.beginPath(); X.ellipse(6,-24, 5, 11, 0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(-6,-21, 5, 9, -0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(6,-21, 5, 9, 0.2, 0, Math.PI*2); X.fill();
     X.fillStyle = '#f8c0c0';
-    X.beginPath(); X.ellipse(-6,-24, 3, 8, -0.2, 0, Math.PI*2); X.fill();
-    X.beginPath(); X.ellipse(6,-24, 3, 8, 0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(-6,-21, 3, 6.5, -0.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(6,-21, 3, 6.5, 0.2, 0, Math.PI*2); X.fill();
   } else if (ch.type === 'panda') {
     // Round black ears
     X.fillStyle = '#2d2d2d';
@@ -2983,12 +3069,48 @@ function updatePlaying(dt) {
 	let wasDashing = player.dashTimer > 0;
 	if (player.dashTimer > 0) player.dashTimer--;
 	if (player.dashCooldown > 0) player.dashCooldown--;
-	if ((keys['ArrowDown'] || touchDash) && player.dashCooldown === 0) {
+	if ((keys['ArrowDown'] || keys['s'] || keys['S'] || touchDash) && player.dashCooldown === 0) {
 		player.vx = player.facing * 21;
 		player.dashTimer = 50;
 		player.dashCooldown = 45;
 		player.squash = 1.4;
 		addParticles(player.x - camera.x, player.y + player.h/2, ['#fff', '#ffe44d', '#ffb347'], 6, 5);
+	}
+
+	// Slingshot shooting with F key
+	if (player.slingshotCooldown > 0) player.slingshotCooldown--;
+	if ((keys['f'] || keys['F']) && player.hasSlingshot && player.slingshotCooldown === 0) {
+		// Shoot a projectile from slingshot in hand
+		let slingshotX = player.x + player.facing * 10; // Same position as drawn slingshot
+		let slingshotY = player.y + player.h / 2 - 18; // At the band position
+		
+		projectiles.push({
+			x: slingshotX + player.facing * 12, // Spawn ahead of slingshot
+			y: slingshotY,
+			vx: player.facing * 8,
+			vy: 0,
+			active: true,
+			airTime: 0 // Track time in air for delayed gravity
+		});
+		player.slingshotCooldown = 30; // ~0.5 second cooldown
+		addParticles(slingshotX - camera.x, slingshotY, ['#ff4444','#cc0000'], 8, 4);
+	}
+
+	// Update projectiles
+	for (let proj of projectiles) {
+		if (!proj.active) continue;
+		proj.x += proj.vx;
+		proj.airTime++; // Increment air time
+		// Only apply gravity after 1 second (60 frames at 60fps)
+		if (proj.airTime > 60) {
+			proj.vy += 0.3; // Gravity
+		}
+		proj.y += proj.vy;
+		
+		// Deactivate if off screen or hits ground
+		if (proj.x < camera.x - 50 || proj.x > camera.x + W + 50 || proj.y > H) {
+			proj.active = false;
+		}
 	}
 
 	if (player.dashTimer > 0) {
@@ -3079,16 +3201,25 @@ function updatePlaying(dt) {
 
 			// Spikes kill on landing
 			if (p.hasSpikes && !player.hasInvincible && state !== 'RESPAWNING') {
-				lives--;
-				if (lives <= 0) {
-					state = 'GAME_OVER';
-					gameOverTimer = 0;
-					stopMusic();
-				} else {
-					state = 'RESPAWNING';
-					respawnTimer = 0;
-					oopsAlpha = 1;
+				// If big, shrink to small instead of losing a life
+				if (player.sizeState === 'big') {
+					player.sizeState = 'small';
 					playOopsSound();
+					addParticles(player.x - camera.x, player.y + player.h/2, ['#ff6b6b','#ffaa00'], 15, 6);
+					showFloatingText(player.x - camera.x, player.y - 10, 'SHRINK!', '#ff6b6b');
+				} else {
+					// Normal damage - lose life
+					lives--;
+					if (lives <= 0) {
+						state = 'GAME_OVER';
+						gameOverTimer = 0;
+						stopMusic();
+					} else {
+						state = 'RESPAWNING';
+						respawnTimer = 0;
+						oopsAlpha = 1;
+						playOopsSound();
+					}
 				}
 			}
 
@@ -3170,6 +3301,38 @@ function updatePlaying(dt) {
 		}
 	}
 
+	// Collect steaks (size powerup)
+	for (let steak of steaks) {
+		if (steak.collected) continue;
+		steak.bob += 0.04;
+		let dx = player.x - steak.x;
+		let dy = (player.y + player.h/2) - steak.y;
+		if (Math.sqrt(dx*dx + dy*dy) < 35) {
+			steak.collected = true;
+			player.sizeState = 'big';
+			playPurchaseSound();
+			addParticles(steak.x - camera.x, steak.y, ['#8B4513','#A0522D','#CD853F','#fff'], 25, 10);
+			showFloatingText(steak.x - camera.x, steak.y - 25, 'BIG MODE!', '#8B4513');
+		}
+	}
+
+	// Collect slingshots
+	for (let ss of slingshots) {
+		if (ss.collected) continue;
+		// NO bobbing update - slingshot is completely stationary
+		
+		let dx = player.x - ss.x;
+		let dy = (player.y + player.h/2) - ss.y;
+		if (Math.sqrt(dx*dx + dy*dy) < 30) {
+			ss.collected = true;
+			player.hasSlingshot = true;
+			player.slingshotTimer = 900; // 15 seconds at 60fps
+			playPurchaseSound(); // Chime sound
+			addParticles(ss.x, ss.y, ['#ff0000','#ffff00','#ffa500'], 20, 8);
+			showFloatingText(ss.x, ss.y - 20, 'SLINGSHOT!', '#ff0000');
+		}
+	}
+
 
 	// Invincibility timer tick
 	if (player.hasInvincible) {
@@ -3177,6 +3340,15 @@ function updatePlaying(dt) {
 		if (player.invincibleTimer <= 0) {
 			player.hasInvincible = false;
 			player.invincibleTimer = 0;
+		}
+	}
+
+	// Slingshot timer tick
+	if (player.hasSlingshot) {
+		player.slingshotTimer -= 1;
+		if (player.slingshotTimer <= 0) {
+			player.hasSlingshot = false;
+			player.slingshotTimer = 0;
 		}
 	}
 
@@ -3215,6 +3387,19 @@ function updatePlaying(dt) {
 
 		en.bobPhase += 0.1;
 
+		// Projectile collision with enemy
+		for (let proj of projectiles) {
+			if (!proj.active) continue;
+			let pdx = proj.x - en.x;
+			let pdy = proj.y - (en.y + en.h/2);
+			if (Math.sqrt(pdx*pdx + pdy*pdy) < 20) {
+				// Hit!
+				en.alive = false;
+				proj.active = false;
+				addParticles(en.x - camera.x, en.y + en.h/2, ['#ff4444','#cc0000','#990000','#fff'], 20, 8);
+				playSquishSound();
+			}
+		}
 
 		// Collision with player
 		let dx = player.x - en.x;
@@ -3241,17 +3426,26 @@ function updatePlaying(dt) {
 				showFloatingText(en.x - camera.x, en.y, '+150', '#ff8800');
 				addParticles(en.x - camera.x, en.y + en.h/2, [en.color, '#fff', '#ff8'], 12, 8);
 			} else {
-				// Side hit: respawn
-				lives--;
-				if (lives <= 0) {
-					state = 'GAME_OVER';
-					gameOverTimer = 0;
-					stopMusic();
-				} else {
-					state = 'RESPAWNING';
-					respawnTimer = 0;
-					oopsAlpha = 1;
+				// Side hit: check size state
+				if (player.sizeState === 'big') {
+					// Big -> small, no life lost
+					player.sizeState = 'small';
 					playOopsSound();
+					addParticles(player.x - camera.x, player.y + player.h/2, ['#ff6b6b','#ffaa00'], 15, 6);
+					showFloatingText(player.x - camera.x, player.y - 10, 'SHRINK!', '#ff6b6b');
+				} else {
+					// Normal or small - lose life
+					lives--;
+					if (lives <= 0) {
+						state = 'GAME_OVER';
+						gameOverTimer = 0;
+						stopMusic();
+					} else {
+						state = 'RESPAWNING';
+						respawnTimer = 0;
+						oopsAlpha = 1;
+						playOopsSound();
+					}
 				}
 			}
 		}
@@ -3291,16 +3485,51 @@ function updatePlaying(dt) {
 			if (camera.x < 0) camera.x = 0;
 			addParticles(player.x - camera.x, player.y, ['#ff0000','#ff8800','#ffff00','#00ff00','#0088ff','#8800ff'], 15, 6);
 		} else {
-			lives--;
-			if (lives <= 0) {
-				state = 'GAME_OVER';
-				gameOverTimer = 0;
-				stopMusic();
-			} else {
-				state = 'RESPAWNING';
-				respawnTimer = 0;
-				oopsAlpha = 1;
+			// Fall damage - check size state
+			if (player.sizeState === 'big') {
+				// Big -> small, respawn on nearest platform (like invincibility)
+				player.sizeState = 'small';
+				
+				// Find nearest solid/moving platform to player's x
+				let bestPlat = null;
+				let bestDist = Infinity;
+				for (let pi = 0; pi < platforms.length; pi++) {
+					let p = platforms[pi];
+					// Skip blinking platforms - player could fall through
+					if (p.type === 'blinking') continue;
+					// Distance from player to closest point on platform's x range
+					let closestX = Math.max(p.x, Math.min(player.x, p.x + p.w));
+					let dist = Math.abs(closestX - player.x);
+					// Prefer platforms at or ahead of player, penalize ones behind
+					if (p.x + p.w < player.x) dist += 200;
+					if (dist < bestDist) { bestDist = dist; bestPlat = p; }
+				}
+				if (!bestPlat) bestPlat = platforms[0];
+				player.x = bestPlat.x + bestPlat.w / 2;
+				player.y = bestPlat.y - player.h;
+				player.vx = 0;
+				player.vy = 0;
+				player.onGround = true;
+				// Snap camera so player doesn't appear off-screen
+				camera.x = player.x - W / 3;
+				if (camera.x < 0) camera.x = 0;
+				
 				playOopsSound();
+				addParticles(player.x - camera.x, player.y + player.h/2, ['#ff6b6b','#ffaa00'], 15, 6);
+				showFloatingText(player.x - camera.x, player.y - 10, 'SHRINK!', '#ff6b6b');
+			} else {
+				// Normal or small - lose life
+				lives--;
+				if (lives <= 0) {
+					state = 'GAME_OVER';
+					gameOverTimer = 0;
+					stopMusic();
+				} else {
+					state = 'RESPAWNING';
+					respawnTimer = 0;
+					oopsAlpha = 1;
+					playOopsSound();
+				}
 			}
 		}
 	}
@@ -3479,6 +3708,47 @@ function drawPlaying() {
 		drawStar(wp.x + 10, wy - 12, 2 + Math.sin(now/300 + wp.bob)*1.5);
 	}
 
+	// Steak pickups (size powerup)
+	for (let steak of steaks) {
+		if (steak.collected) continue;
+		let sy = steak.y + Math.sin(steak.bob) * 6;
+		
+		// Golden glow
+		X.fillStyle = 'rgba(255,215,0,0.3)';
+		X.beginPath(); X.arc(steak.x, sy, 25, 0, Math.PI*2); X.fill();
+		
+		X.save(); X.translate(steak.x, sy);
+		// Draw juicy steak
+		// Outer steak shape
+		X.fillStyle = '#8B4513';
+		X.beginPath();
+		X.ellipse(0, 0, 18, 12, 0.3, 0, Math.PI*2);
+		X.fill();
+		
+		// Meat texture (red/pink)
+		X.fillStyle = '#CD5C5C';
+		X.beginPath();
+		X.ellipse(-3, -2, 10, 7, 0.2, 0, Math.PI*2);
+		X.fill();
+		
+		// Fat marbling (white streaks)
+		X.strokeStyle = '#fff';
+		X.lineWidth = 2;
+		X.lineCap = 'round';
+		X.beginPath(); X.moveTo(-8, 2); X.lineTo(-2, 0); X.stroke();
+		X.beginPath(); X.moveTo(4, -3); X.lineTo(8, -1); X.stroke();
+		
+		// Shine/juiciness
+		X.fillStyle = 'rgba(255,255,255,0.6)';
+		X.beginPath(); X.ellipse(-5, -4, 4, 3, -0.3, 0, Math.PI*2); X.fill();
+		
+		X.restore();
+		
+		// Sparkle
+		X.fillStyle = '#ffd700';
+		drawStar(steak.x + 12, sy - 15, 3 + Math.sin(Date.now()/250 + steak.bob)*1.5);
+	}
+
 
 	// Energy drink pickups
 	for (let ed of energyDrinks) {
@@ -3522,6 +3792,36 @@ function drawPlaying() {
 		drawStar(ed.x + 10, ey - 14, 2 + Math.sin(now/200 + ed.bob)*1.5);
 		X.fillStyle = `hsl(${(hueShift+90)%360},100%,70%)`;
 		drawStar(ed.x - 8, ey - 10, 1.5 + Math.sin(now/250 + ed.bob+1)*1);
+	}
+
+	// Slingshot pickups
+	for (let ss of slingshots) {
+		if (ss.collected) continue;
+		
+		// NO bobbing - completely stationary
+		let sx = ss.x;
+		let sy = ss.y;
+		
+		// Glow
+		X.fillStyle = 'rgba(255,215,0,0.3)';
+		X.beginPath(); X.arc(sx, sy, 20, 0, Math.PI*2); X.fill();
+		
+		X.save(); X.translate(sx, sy);
+		// Y-shaped slingshot - RED and YELLOW
+		// Handle (RED)
+		X.strokeStyle = '#ff0000';
+		X.lineWidth = 3;
+		X.lineCap = 'round';
+		X.beginPath(); X.moveTo(0, 8); X.lineTo(0, -4); X.stroke();
+		// Left fork (RED)
+		X.beginPath(); X.moveTo(0, -4); X.lineTo(-6, -10); X.stroke();
+		// Right fork (RED)
+		X.beginPath(); X.moveTo(0, -4); X.lineTo(6, -10); X.stroke();
+		// Rubber band (YELLOW)
+		X.strokeStyle = '#ffff00';
+		X.lineWidth = 2;
+		X.beginPath(); X.moveTo(-6, -10); X.lineTo(6, -10); X.stroke();
+		X.restore();
 	}
 
 
@@ -3577,9 +3877,35 @@ function drawPlaying() {
 	}
 
 
-	// Player
-	drawCharacter(player.x, player.y + player.h/2 - 2, character, 1, player.facing, player.squash, player.walkFrame, false);
+	// Player - scale based on size state
+	let playerScale = 1;
+	if (player.sizeState === 'big') playerScale = 1.5;
+	else if (player.sizeState === 'small') playerScale = 0.7;
+	drawCharacter(player.x, player.y + player.h/2 - 2, character, playerScale, player.facing, player.squash, player.walkFrame, false);
 
+	// Draw slingshot in player's hand if equipped
+	if (player.hasSlingshot) {
+		let px = player.x, py = player.y + player.h/2;
+		X.save(); X.translate(px, py); // Don't subtract camera - it's already done globally
+		// Don't scale - just draw at correct position based on facing
+		let offsetX = player.facing * 10; // Position in front of player
+		
+		// Slingshot in hand - RED and YELLOW (much bigger)
+		// Handle (RED) - thicker and taller
+		X.strokeStyle = '#ff0000';
+		X.lineWidth = 4;
+		X.lineCap = 'round';
+		X.beginPath(); X.moveTo(offsetX, 4); X.lineTo(offsetX, -12); X.stroke();
+		// Forks (RED) - longer and wider
+		X.lineWidth = 3.5;
+		X.beginPath(); X.moveTo(offsetX, -12); X.lineTo(offsetX - 8*Math.sign(player.facing), -24); X.stroke();
+		X.beginPath(); X.moveTo(offsetX, -12); X.lineTo(offsetX + 8*Math.sign(player.facing), -24); X.stroke();
+		// Band (YELLOW) - thicker
+		X.strokeStyle = '#ffff00';
+		X.lineWidth = 3;
+		X.beginPath(); X.moveTo(offsetX - 8*Math.sign(player.facing), -24); X.lineTo(offsetX + 8*Math.sign(player.facing), -24); X.stroke();
+		X.restore();
+	}
 
 	// Draw wings on player if equipped
 	if (player.hasWings) {
@@ -3642,6 +3968,26 @@ function drawPlaying() {
 		}
 	}
 
+
+	// Projectiles - draw AFTER player so they're always visible
+	X.globalAlpha = 1; // Ensure full opacity
+	for (let proj of projectiles) {
+		if (!proj.active) continue;
+		let px = proj.x; // Don't subtract camera - already done globally
+		let py = proj.y;
+		
+		// Outer glow
+		X.fillStyle = 'rgba(255,100,100,0.4)';
+		X.beginPath(); X.arc(px, py, 10, 0, Math.PI*2); X.fill();
+		
+		// Red ball - larger and brighter
+		X.fillStyle = '#ff0000';
+		X.beginPath(); X.arc(px, py, 7, 0, Math.PI*2); X.fill();
+		
+		// Shine
+		X.fillStyle = '#ffcccc';
+		X.beginPath(); X.arc(px - 2, py - 2, 3, 0, Math.PI*2); X.fill();
+	}
 
 	X.restore();
 
@@ -3713,6 +4059,22 @@ function drawPlaying() {
 		X.fillStyle = '#fff';
 		X.font = '11px Segoe UI, sans-serif';
 		X.fillText(tr('invincible'), 42, hudY + 14);
+	}
+
+	// Slingshot timer HUD
+	if (player.hasSlingshot) {
+		let slingshotPct = player.slingshotTimer / 900;
+		let hudY = 52;
+		if (player.hasWings) hudY = 78;
+		if (player.hasInvincible) hudY += 26;
+		
+		X.fillStyle = 'rgba(0,0,0,0.4)';
+		drawRoundRect(10, hudY, 140, 20, 6);
+		X.fillStyle = slingshotPct > 0.3 ? '#ff0000' : '#ff6b6b';
+		drawRoundRect(12, hudY + 2, 136 * slingshotPct, 16, 5);
+		X.fillStyle = '#fff';
+		X.font = '11px Segoe UI, sans-serif';
+		X.fillText('🎯 SLINGSHOT', 40, hudY + 14);
 	}
 
 
@@ -4424,6 +4786,10 @@ function drawTitle() {
 
             if (consumeClick(writeNameBtnX, writeNameBtnY, writeNameBtnW, writeNameBtnH)) {
                 showNameInput = true;
+                playerName = '';
+                mobileInput.value = '';
+                // Focus input on mobile to bring up keyboard
+                setTimeout(() => mobileInput.focus(), 100);
             }
         }
 
@@ -5163,13 +5529,13 @@ function drawLevelSelect() {
     X.fillText(tr('chooseLevel'), W/2, 60);
 
 
-    // Draw character
-    drawCharacter(W/2, 100, character, 1.4, 1, 1, Date.now()/300, false);
+    // Draw character - moved lower to avoid crowding
+    drawCharacter(W/2, 120, character, 1.4, 1, 1, Date.now()/300, false);
 
 
     for (let i = 0; i < THEMES.length; i++) {
         let col = i % 5, row = (i / 5) | 0;
-        let bx = W/2 - 340 + col * 150, by = 150 + row * 175, bw = 120, bh = 160;
+        let bx = W/2 - 340 + col * 150, by = 170 + row * 175, bw = 120, bh = 160;
         let locked = i > unlockedLevel;
 
 
@@ -5405,6 +5771,9 @@ function drawGameComplete() {
     if (gameCompleteTimer > 60 && consumeClick(W/2-60, 400, 120, 40)) { startMenuMusic(); state = 'LEVEL_SELECT'; }
     if (gameCompleteTimer > 60 && consumeClick(W/2+70, 400, 120, 40)) {
         showNameInput = true;
+        playerName = '';
+        mobileInput.value = '';
+        setTimeout(() => mobileInput.focus(), 100);
     }
 
 
@@ -5466,6 +5835,7 @@ function drawGameComplete() {
             lastSubmittedName = playerName; // Remember this name for auto-updates
             showNameInput = false;
             playerName = '';
+            mobileInput.blur();
             // Close leaderboard too if from game over
             if (leaderboardFromGameOver) {
                 showLeaderboard = false;
@@ -5648,6 +6018,7 @@ function drawRespawning() {
         camera.x = 0;
         player.vx = 0;
         player.vy = 0;
+        player.sizeState = 'normal'; // Reset size on respawn
         // Reset enemies
         for (let en of enemies) {
             en.alive = true;
@@ -5713,6 +6084,7 @@ function drawNameInputOverlay() {
         addToLeaderboard(playerName, finalScore, totalStars);
         showNameInput = false;
         playerName = '';
+        mobileInput.blur();
     }
 
     // Click outside to cancel
@@ -5720,6 +6092,7 @@ function drawNameInputOverlay() {
         if (clickX < panelX || clickX > panelX + panelW || clickY < panelY || clickY > panelY + panelH) {
             showNameInput = false;
             playerName = '';
+            mobileInput.blur();
             clicked = false;
         }
     }
